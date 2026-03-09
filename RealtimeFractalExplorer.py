@@ -195,9 +195,6 @@ class Camera:
         safe_step  = min(speed, max(dist_local*0.4, 0.0))
         self.pos  += move_dir * safe_step * world_scale
 
-        if keys[K_e]: self.zoom_level += 1.0*dt
-        if keys[K_q]: self.zoom_level -= 1.0*dt
-
 
 def main():
     pygame.init()
@@ -245,7 +242,7 @@ def main():
         pygame.display.set_caption(
             f"Mandelbulb  |  Zoom: 10^{cam.zoom_level:.1f}"
             f"  |  Speed: {cam.base_speed:.1f}"
-            f"  |  [WASD] move  [QE] zoom  [R] reset  [Shift] fast"
+            f"  |  [WASD] move [R] reset  [Shift] fast"
         )
 
 
