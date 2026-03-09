@@ -22,31 +22,19 @@ uniform mat3  camRot;
 uniform float fovScale;
 uniform float aspect;
 uniform float worldScale;
-uniform vec3  camPosHi;   // high bits of camera position
-uniform vec3  camPosLo;   // low bits  (Dekker split — fixes deep-zoom blobbiness)
+uniform vec3  camPosHi;
+uniform vec3  camPosLo;
 uniform float pixScale;
 uniform int   iters;
 
-// Reconstruct exact global position from Dekker-split camera + local offset.
-// float32 camPos would lose ~7 decimal digits at deep zoom; this keeps all bits.
-// Iterate entirely in local (offset) space.
-// c_local = p_local * worldScale + camPosLo  (small offset from camPosHi)
-// z starts at c_local (near zero at deep zoom) — float32 keeps full precision.
-// Each iteration: z_global = camPosHi + z_local, but we only need |z_global|
-// which equals |camPosHi + z_local|. We compute that without cancellation by
-// keeping z_local small and adding camPosHi only inside length/atan/acos.
 vec2 de(vec3 p_local) {
-    // c is the Julia/Mandelbulb constant = this point in global space
-    // Split: c = camPosHi + c_lo  where c_lo is small (fits in float32 cleanly)
-    vec3 c_lo = p_local * worldScale + camPosLo;  // small: |c_lo| < worldScale*10
+    vec3 c_lo = p_local * worldScale + camPosLo;
 
-    // z iterates as an offset from camPosHi: z_global = camPosHi + z_lo
     vec3 z_lo = c_lo;
     float dr   = 1.0;
     float trap = 1e9;
 
     for(int i = 0; i < iters; i++){
-        // Reconstruct full z for length/angle — camPosHi is O(1), z_lo is small
         vec3 z_g = camPosHi + z_lo;
         float r  = length(z_g);
         if(r > 4.0) break;
@@ -56,14 +44,13 @@ vec2 de(vec3 p_local) {
         dr  = pow(r,7.0)*8.0*dr + 1.0;
         float zr = pow(r,8.0);
 
-        // Next z_global = zr*(sin/cos...) + c_global
-        // Next z_lo     = zr*(sin/cos...) + c_lo - camPosHi*(zr-1) ... 
-        // Simpler: just store z_global directly once |z| grows away from origin.
-        // At early iters z_g ~ camPosHi so precision matters; after a few iters
-        // z escapes to O(1) and float32 is fine. Store as offset until escape.
-        vec3 z_next_g = zr*vec3(sin(theta)*cos(phi),sin(theta)*sin(phi),cos(theta)) + camPosHi + c_lo;
-        z_lo = z_next_g - camPosHi;  // keep as offset for next iteration
+        vec3 z_next_g =
+            zr*vec3(sin(theta)*cos(phi),
+                    sin(theta)*sin(phi),
+                    cos(theta))
+            + camPosHi + c_lo;
 
+        z_lo = z_next_g - camPosHi;
         trap = min(trap, r);
     }
 
@@ -84,19 +71,23 @@ float calcAO(vec3 p, vec3 n, float hitDist) {
     float ao   = 0.0;
     float w    = 0.5;
     float base = max(hitDist * 3.0, 1e-5);
+
     float s[8];
     s[0]=base*1.0; s[1]=base*2.2; s[2]=base*4.0; s[3]=base*7.0;
     s[4]=base*11.0;s[5]=base*16.0;s[6]=base*22.0;s[7]=base*30.0;
+
     for(int i=0;i<8;i++){
         float d = de(p + n*s[i]).x;
         ao += w * max(0.0, s[i] - d);
         w  *= 0.55;
     }
+
     float raw = clamp(1.0 - ao/(base*3.5), 0.0, 1.0);
     return raw*raw*raw;
 }
 
 void main(){
+
     vec3 rd = normalize(camRot * vec3(uv*vec2(aspect,1.0)*fovScale, 1.0));
 
     float t    = 0.0;
@@ -108,9 +99,15 @@ void main(){
     for(int i = 0; i < 300; i++){
         res = de(rd * t);
         float eps = t * pixScale * 0.5;
-        if(res.x < eps){ hit = true; break; }
-        t    += res.x * 0.85;
+
+        if(res.x < eps){
+            hit = true;
+            break;
+        }
+
+        t += res.x * 0.85;
         steps += 1.0;
+
         if(t > tMax) break;
     }
 
@@ -128,15 +125,17 @@ void main(){
         float veinMask = pow(trap, 6.0) * 3.0;
 
         vec3  base    = vec3(0.015, 0.03, 0.06) * ao;
-        vec3  rimCol  = vec3(0.0,  0.85, 1.0);
-        vec3  veinCol = vec3(0.0,  0.5,  0.9);
+        vec3  rimCol  = vec3(0.0, 0.85, 1.0);
+        vec3  veinCol = vec3(0.0, 0.5, 0.9);
+
         float rimStr  = fresnel * sqrt(ao) * 1.8;
 
         col = base + rimCol * rimStr + veinCol * veinMask * ao * 0.4;
-
-        float fog = exp(-0.15 * t);
-        col *= fog;
     }
+
+    /* SPACE GAS — affects empty space too */
+    float gas = 0.001 * steps * exp(0.1 * steps);
+    col += vec3(0.0,1.0,1.0) * gas;
 
     col = (col*(2.51*col+2)) / (col*(2.43*col+2)+5);
     fragColor = vec4(pow(max(col,vec3(0.0)), vec3(0.4545)), 1.0);
